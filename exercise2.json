@@ -1,0 +1,278 @@
+{
+  "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "storageAccountType": {
+      "type": "string",
+      "defaultValue": "Standard_LRS"
+    },
+    "storageAccountNamePrefix": {
+      "type": "string",
+      "defaultValue": "eustorage"
+    },
+    "vmAccountOSType": {
+      "type": "array",
+      "defaultValue": [ "mvm", "lvm" ]
+    },
+    "vmAdminUserName": {
+      "type": "array",
+      "defaultValue": [ "mvmAdmin", "lvmroot" ],
+      "minLength": 1
+    },
+    "vmAdminPassword": {
+      "type": "securestring"
+    },
+    "vmOSVersion": {
+      "type": "array",
+      "defaultValue": [ "2012-R2-Datacenter", "14.04.2-LTS" ]
+    },
+    "vmName": {
+      "type": "array",
+      "defaultValue": [ "EUWINVM01", "EULINVM01" ]
+    },
+    "vmImagePublisher": {
+      "type": "array",
+      "defaultValue": [ "MicrosoftWindowsServer", "Canonical" ]
+    },
+    "vmImageOffer": {
+      "type": "array",
+      "defaultValue": [ "WindowsServer", "UbuntuServer" ]
+    },
+    "vmSubnetRef": {
+      "type": "array",
+      "defaultValue": [ "EUWGSBN-1", "EUWGSBN-2" ]
+    },
+    "euparamsq01AdminLogin": {
+      "type": "string",
+      "minLength": 1
+    },
+    "euparamsq01AdminLoginPassword": {
+      "type": "securestring"
+    },
+    "sdqldb1Name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sdqldb1Collation": {
+      "type": "string",
+      "minLength": 1,
+      "defaultValue": "SQL_Latin1_General_CP1_CI_AS"
+    },
+    "sdqldb1Edition": {
+      "type": "string",
+      "defaultValue": "Basic",
+      "allowedValues": [
+        "Basic",
+        "Standard",
+        "Premium"
+      ]
+    },
+    "sdqldb1RequestedServiceObjectiveName": {
+      "type": "string",
+      "defaultValue": "Basic",
+      "allowedValues": [
+        "Basic",
+        "S0",
+        "S1",
+        "S2",
+        "P1",
+        "P2",
+        "P3"
+      ],
+      "metadata": {
+        "description": "Describes the performance level for Edition"
+      }
+    }
+  },
+  "variables": {
+    "tempPrefix": "10.0.0.0/16",
+    "tempSubnet1Name": "[parameters('vmSubnetRef')[0]]",
+    "tempSubnet1Prefix": "10.0.0.0/24",
+    "tempSubnet2Name": "[parameters('vmSubnetRef')[1]]",
+    "tempSubnet2Prefix": "10.0.1.0/24",
+    "vmVmSize": "Standard_D2_v2",
+    "vmVnetID": "[resourceId('Microsoft.Network/virtualNetworks', 'EUWGVNT01')]",
+    "vmStorageAccountContainerName": "vhds",
+    "euparamsq01Name": "[concat('euparamsq01', uniqueString(resourceGroup().id))]"
+  },
+  "resources": [
+    {
+      "name": "[concat(parameters('storageAccountNamePrefix'),parameters('vmAccountOSType')[copyIndex()])]",
+      "type": "Microsoft.Storage/storageAccounts",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2016-01-01",
+      "copy": {
+        "count": "[length(parameters('vmAccountOSType'))]",
+        "name": "storageCopy"
+      },
+      "sku": {
+        "name": "[parameters('storageAccountType')]"
+      },
+      "dependsOn": [],
+      "tags": {
+        "displayName": "[concat(parameters('storageAccountNamePrefix'),parameters('vmAccountOSType')[copyIndex()])]"
+      },
+      "kind": "Storage"
+    },
+    {
+      "name": "EUWGVNT01",
+      "type": "Microsoft.Network/virtualNetworks",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2016-03-30",
+      "dependsOn": [ ],
+      "tags": {
+        "displayName": "EUWGVNT01"
+      },
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[variables('tempPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[variables('tempSubnet1Name')]",
+            "properties": {
+              "addressPrefix": "[variables('tempSubnet1Prefix')]"
+            }
+          },
+          {
+            "name": "[variables('tempSubnet2Name')]",
+            "properties": {
+              "addressPrefix": "[variables('tempSubnet2Prefix')]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "[concat(parameters('vmName')[copyIndex()],'-nic-0')]",
+      "type": "Microsoft.Network/networkInterfaces",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2016-03-30",
+      "copy": {
+        "count": "[length(parameters('vmName'))]",
+        "name": "copyNic"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', 'EUWGVNT01')]"
+      ],
+      "tags": {
+        "displayName": "[concat(parameters('vmName')[copyIndex()],'-nic-0')]"
+      },
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[concat(variables('vmVnetID'), '/subnets/', parameters('vmSubnetRef')[copyIndex()])]"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "[parameters('vmName')[copyIndex()]]",
+      "type": "Microsoft.Compute/virtualMachines",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "copy": {
+        "count": "[length(parameters('vmAccountOSType'))]",
+        "name": "copyVM"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', concat(parameters('storageAccountNamePrefix'),parameters('vmAccountOSType')[copyIndex()]))]",
+        "[resourceId('Microsoft.Network/networkInterfaces', concat(parameters('vmName')[copyIndex()],'-nic-0'))]"
+      ],
+      "tags": {
+        "displayName": "[parameters('vmName')[copyIndex()]]"
+      },
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[variables('vmVmSize')]"
+        },
+        "osProfile": {
+          "computerName": "[parameters('vmName')[copyIndex()]]",
+          "adminUsername": "[parameters('vmAdminUserName')[copyIndex()]]",
+          "adminPassword": "[parameters('vmAdminPassword')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "[parameters('vmImagePublisher')[copyIndex()]]",
+            "offer": "[parameters('vmImageOffer')[copyIndex()]]",
+            "sku": "[parameters('vmOSVersion')[copyIndex()]]",
+            "version": "latest"
+          },
+          "osDisk": {
+            "name": "[concat(parameters('vmName')[copyIndex()],'_Disk0')]",
+            "vhd": {
+              "uri": "[concat(reference(resourceId('Microsoft.Storage/storageAccounts', concat(parameters('storageAccountNamePrefix'),parameters('vmAccountOSType')[copyIndex()])), '2016-01-01').primaryEndpoints.blob, variables('vmStorageAccountContainerName'), '/', concat(parameters('vmName')[copyIndex()],'_Disk0'), '.vhd')]"
+            },
+            "caching": "ReadWrite",
+            "createOption": "FromImage"
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', concat(parameters('vmName')[copyIndex()],'-nic-0'))]"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "[variables('euparamsq01Name')]",
+      "type": "Microsoft.Sql/servers",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2014-04-01-preview",
+      "dependsOn": [ ],
+      "tags": {
+        "displayName": "euparamsq01"
+      },
+      "properties": {
+        "administratorLogin": "[parameters('euparamsq01AdminLogin')]",
+        "administratorLoginPassword": "[parameters('euparamsq01AdminLoginPassword')]"
+      },
+      "resources": [
+        {
+          "name": "AllowAllWindowsAzureIps",
+          "type": "firewallrules",
+          "location": "[resourceGroup().location]",
+          "apiVersion": "2014-04-01-preview",
+          "dependsOn": [
+            "[resourceId('Microsoft.Sql/servers', variables('euparamsq01Name'))]"
+          ],
+          "properties": {
+            "startIpAddress": "0.0.0.0",
+            "endIpAddress": "0.0.0.0"
+          }
+        },
+        {
+          "name": "[parameters('sdqldb1Name')]",
+          "type": "databases",
+          "location": "[resourceGroup().location]",
+          "apiVersion": "2014-04-01-preview",
+          "dependsOn": [
+            "[resourceId('Microsoft.Sql/servers', variables('euparamsq01Name'))]"
+          ],
+          "tags": {
+            "displayName": "sdqldb1"
+          },
+          "properties": {
+            "collation": "[parameters('sdqldb1Collation')]",
+            "edition": "[parameters('sdqldb1Edition')]",
+            "maxSizeBytes": "1073741824",
+            "requestedServiceObjectiveName": "[parameters('sdqldb1RequestedServiceObjectiveName')]"
+          }
+        }
+      ]
+    }
+  ],
+  "outputs": {
+
+  }
+}
